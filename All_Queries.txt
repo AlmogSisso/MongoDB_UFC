@@ -1,0 +1,676 @@
+//כל השאילות יחד 
+
+//----סעיף 1 ----
+//הקמה של מסד הנתונים
+Use UFC_DataBase
+load("C:/Users/almog/Almog_codes/mongoDB/insert_Fighters.js")
+load("C:/Users/almog/Almog_codes/mongoDB/insert_Events.js")
+
+
+//----סעיף 2----
+// האלופים הנוכחים
+db.Fighters.find(
+  { "championships.endDate": null },
+  { firstName: 1, lastName: 1, championships: 1, _id: 0 }
+).forEach(fighter => {
+  fighter.championships.forEach(championship => {
+    if (championship.endDate === null) {
+      const startDate = new Date(championship.startDate);
+      const today = new Date();
+      const daysHeld = Math.floor((today - startDate) / (1000 * 60 * 60 * 24)); // Calculate days
+      print(`${fighter.firstName} ${fighter.lastName} holds the "${championship.weightClass}" championship from ${championship.startDate} until now (${daysHeld} days).`);
+    }
+  });
+});
+
+
+
+
+
+//---3---
+//חלוקת הלוחמים לפי קטגורית משקל
+db.Fighters.aggregate([
+  { $group: { _id: "$weightClass", count: { $sum: 1 } } },
+  { $sort: { _id: 1 } }
+]).forEach(result => 
+  print(`In the "${result._id}" weight class, there are ${result.count} fighters`)
+);
+
+
+
+//---4---
+// שלושת הלוחמים הכי כבדים
+db.Fighters.find(
+{},
+{ firstName: 1, lastName: 1, weightLbs: 1 }
+).sort({ weightLbs: -1 }).limit(3).toArray().forEach(fighter =>
+print(`Name: ${fighter.firstName} ${fighter.lastName}, Weight: ${fighter.weightLbs} lbs`));
+
+
+
+//---5---
+// 10 הלוחמים הכי טובים 
+db.Fighters.aggregate([
+  { $addFields: { 
+      totalFights: { $sum: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"] }, 
+      winPercentage: { $cond: [ { $gt: [{ $sum: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"] }, 0] }, 
+                              { $multiply: [{ $divide: ["$record.wins", { $sum: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"] }] }, 100] }, 0 ] }
+    }
+  },
+  { $sort: { winPercentage: -1 } },
+  { $limit: 10 },
+  { $project: { firstName: 1, lastName: 1, nickname: 1, "record.wins": 1, totalFights: 1, winPercentage: { $round: ["$winPercentage", 2] } } }
+]).forEach(fighter => {
+  print(`Fighter: ${fighter.firstName} ${fighter.lastName} (${fighter.nickname})`);
+  print(`Wins: ${fighter.record.wins}`);
+  print(`Total Fights: ${fighter.totalFights}`);
+  print(`Win Percentage: ${fighter.winPercentage}%`);
+  print('------------------------');
+});
+
+
+
+
+//---6---
+//11-20 הלוחמים הכי טובים
+db.Fighters.aggregate([
+{ $addFields: {
+totalFights: { $sum: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"] },
+winPercentage: { $cond: [ { $gt: [{ $sum: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"] }, 0] },
+{ $multiply: [{ $divide: ["$record.wins", { $sum: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"] }] }, 100] }, 0 ] }
+}
+},
+{ $sort: { winPercentage: -1 } },
+{ $skip: 10 },  
+{ $limit: 10 },
+{ $project: { firstName: 1, lastName: 1, nickname: 1, "record.wins": 1, totalFights: 1, winPercentage: { $round: ["$winPercentage", 2] } } }
+]).forEach(fighter => {
+print(`Fighter: ${fighter.firstName} ${fighter.lastName} (${fighter.nickname})`);
+print(`Wins: ${fighter.record.wins}`);
+print(`Total Fights: ${fighter.totalFights}`);
+print(`Win Percentage: ${fighter.winPercentage}%`);
+print('------------------------');
+});
+
+
+
+
+//---7---
+//סיכום של אירוע ספציפי
+// Function to get a summary of a UFC event
+function getEventSummary(eventId) {
+  // Find the event by ID
+  var event = db.Events.findOne({ _id: eventId });
+  if (!event) return { error: "Event not found" };
+  
+  var summary = {
+    eventName: event.eventName,
+    eventDate: event.eventDate,
+    fights: []
+  };
+  
+  // Process each fight in the event
+  event.fights.forEach(function(fight) {
+    var fighter1 = db.Fighters.findOne({ _id: parseInt(fight.fighter1) });
+    var fighter2 = db.Fighters.findOne({ _id: parseInt(fight.fighter2) });
+    
+    if (!fighter1 || !fighter2) {
+      summary.fights.push({ error: "Fighter details not found for this fight" });
+      return;
+    }
+    
+    var fightSummary = {
+      weightClass: fight.weightClass,
+      description: ""
+    };
+    
+    if (fight.winner) {
+      var winner = fight.winner === fight.fighter1 ? fighter1 : fighter2;
+      var loser = fight.winner === fight.fighter1 ? fighter2 : fighter1;
+      fightSummary.description = `${winner.firstName} ${winner.lastName} defeated ${loser.firstName} ${loser.lastName}` +
+                                 (fight.winMethod ? ` by ${fight.winMethod}` : '') +
+                                 (fight.roundNumber ? ` in round ${fight.roundNumber}` : '');
+    } else {
+      fightSummary.description = `${fighter1.firstName} ${fighter1.lastName} fought ${fighter2.firstName} ${fighter2.lastName} to a draw`;
+    }
+    summary.fights.push(fightSummary);
+  });  
+  return summary;
+}
+ 
+// Example usage
+printjson(getEventSummary(229));
+
+
+
+//---8---
+// גיבוי של נתונים
+// Create backups of all data
+db.Fighters.find().forEach(fighter => db.Fighters_Backup.insertOne(fighter));
+db.Events.find().forEach(event => db.Events_Backup.insertOne(event));
+
+
+//---9---
+//יצירה של טבלה אלופים
+db.Fighters.aggregate([
+  { $match: { "championships.endDate": null } },
+  { $unwind: "$championships" },
+  { $match: { "championships.endDate": null } },
+  { $group: {
+    _id: "$_id",
+    "First name": { $first: "$firstName" },
+    "Last name": { $first: "$lastName" },
+    championship: { $push: {
+      weightClass: "$championships.weightClass",
+      startDate: "$championships.startDate",
+      endDate: "$championships.endDate"
+    }}
+  }},
+  { $out: "CurrentChampions" }
+]);
+
+
+
+//---10---
+// מחיקת לוחמים ללא תיעוד 
+// Step 1: Create a temporary collection for inactive fighters
+db.createCollection("TempInactiveFighters");
+ 
+// Step 2: Find and insert inactive fighters into the temporary collection
+db.Fighters.aggregate([
+  {
+    $lookup: {
+      from: "Events",
+      let: { fighterId: "$_id" },
+      pipeline: [
+        { $unwind: "$fights" },
+        {
+          $match: {
+            $expr: {
+              $or: [
+                { $eq: ["$fights.fighter1", "$$fighterId"] },
+                { $eq: ["$fights.fighter2", "$$fighterId"] }
+              ]
+            }
+          }
+        }
+      ],
+      as: "matchingFights"
+    }
+  },
+  { $match: { matchingFights: { $size: 0 } } },
+  {
+    $project: {
+      _id: 1,
+      fullName: { $concat: ["$firstName", " ", "$lastName"] }
+    }
+  },
+  { $out: "TempInactiveFighters" }
+]);
+ 
+// Step 3: Get the inactive fighters from the temporary collection
+let inactiveFighters = db.TempInactiveFighters.find().toArray();
+ 
+// Step 4: Remove inactive fighters using remove
+let deleteResult = db.Fighters.remove({
+  _id: { $in: inactiveFighters.map(f => f._id) }
+});
+ 
+// Step 5: Prepare summary
+let summary = {
+  deletedFighters: deleteResult.nRemoved,
+  deletedFightersNames: inactiveFighters.map(f => f.fullName),
+  remainingFighters: db.Fighters.count()
+};
+ 
+// Step 6: Drop the temporary collection
+db.TempInactiveFighters.drop();
+ 
+printjson(summary);
+ 
+
+
+
+
+//---11---
+// הוספת לוחם חדש
+db.Fighters.insertOne({
+_id: 2000,
+firstName: "Almog",
+lastName: "Sisso",
+nickname: "The Calculator",
+dateOfBirth: "1994-03-15",
+joinedUFC: 2024,
+nationality: "Israel",
+heightCm: 170,
+reachCm: 175,
+weightLbs: 160,
+weightClass: "Welterweight",
+record: {
+wins: 15,
+losses: 2,
+draws: 0,
+noContests: 0,
+knockouts: 2,
+submissions: 8
+},
+martialArts: ["Boxing", "Brazilian Jiu-Jitsu", "Wrestling"],
+championships: []
+});
+db.Fighters.insertOne({
+_id: 2001,
+firstName: "Almog",
+lastName: "Bura",
+nickname: "The Tribal Chief",
+dateOfBirth: "1995-01-09",
+joinedUFC: 2024,
+nationality: "Israel",
+heightCm: 173,
+reachCm: 183,
+weightLbs: 140,
+weightClass: "Featherweight",
+record: {
+wins: 10,
+losses: 1,
+draws: 2,
+noContests: 2,
+knockouts: 2,
+submissions: 4
+},
+martialArts: ["Boxing", "Brazilian Jiu-Jitsu"],
+championships: []
+});
+
+
+//---12---
+// הוספת אירוע וקרב 
+// Insert the new event
+db.Events.insertOne({
+  _id: 505,
+  eventName: "UFC 505: Sisso vs. Makhachev",
+  eventDate: "2026-01-01",
+  eventLocation: "T-Mobile Arena",
+  country: "USA",
+  fights: [{
+    fightId: "505",
+    fighter1: 2000, // Almog Sisso's ID
+    fighter2: 1023, // Islam Makhachev's ID
+    weightClass: "Lightweight",
+    winner: 2000,  // Almog Sisso's ID as the winner
+    winMethod: "Submission",
+    roundNumber: 3
+  }]});
+
+ 
+
+//---13---
+// עידכון תוצאות הקרב - אלוף חדש 
+// Update Almog Sisso (winner)
+db.Fighters.updateOne(
+  { _id: 2000 },
+  {
+    $push: { 
+      championships: { weightClass: "Lightweight", startDate: "2026-01-01", endDate: null }
+    },
+    $inc: { 
+      "record.wins": 1,
+      "record.submissions": 1
+    }
+  }
+);
+ 
+// Update Islam Makhachev (loser)
+db.Fighters.updateOne(
+  { _id: 1023 },
+  {
+    $set: { "championships.$[championship].endDate": "2026-01-01" },
+    $inc: { "record.losses": 1 }
+  },
+  {
+    arrayFilters: [{ "championship.weightClass": "Lightweight", "championship.endDate": null }]
+  }
+);
+ 
+// Retrieve updated fighter data and print the result
+let newChamp = db.Fighters.findOne({ _id: 2000 });
+let formerChamp = db.Fighters.findOne({ _id: 1023 });
+print(newChamp && formerChamp 
+  ? `New champion crowned! ${newChamp.firstName} ${newChamp.lastName} (${newChamp.record.wins}-${newChamp.record.losses}) defeated former champion ${formerChamp.firstName} ${formerChamp.lastName} (${formerChamp.record.wins}-${formerChamp.record.losses}) to become the new UFC Lightweight Champion.` 
+  : "Error retrieving updated fighter data."
+); 
+
+
+
+//---14---
+// הוספת שדה של שופט לקרב
+db.Events.updateMany(
+{},
+{
+$set: {
+"fights.$[].referee": "TBA"
+}})
+
+db.Events.updateOne(
+  { _id: 295, "fights.fightId": "295A" },
+  { $set: { "fights.$.referee": "Herb Dean" } }
+)
+ 
+db.Events.updateOne(
+  { _id: 294, "fights.fightId": "294A" },
+  { $set: { "fights.$.referee": "Marc Goddard" } }
+)
+ 
+db.Events.updateOne(
+  { _id: 293, "fights.fightId": "293A" },
+  { $set: { "fights.$.referee": "Dan Miragliotta" } }
+)
+ 
+db.Events.updateOne(
+  { _id: 292, "fights.fightId": "292A" },
+  { $set: { "fights.$.referee": "Keith Peterson" } }
+)
+ 
+db.Events.updateOne(
+  { _id: 291, "fights.fightId": "291A" },
+  { $set: { "fights.$.referee": "Jason Herzog" } }
+)  
+
+
+
+
+
+//---15---
+//שינוי תוצאות של קרב
+// Step 1: Update the fight result
+db.Events.updateOne(
+  { _id: 236, "fights.fightId": "236A" },
+  {
+    $set: {
+      "fights.$.winner": "1003"  // Holloway's ID
+    }
+  }
+)
+ 
+// Step 2: Get the fighters' IDs and fight details
+let fightInfo = db.Events.aggregate([
+  { $match: { _id: 236, "fights.fightId": "236A" } },
+  { $project: { 
+      fighter1: { $arrayElemAt: ["$fights.fighter1", 0] },
+      fighter2: { $arrayElemAt: ["$fights.fighter2", 0] },
+      winner: { $arrayElemAt: ["$fights.winner", 0] },
+      winMethod: { $arrayElemAt: ["$fights.winMethod", 0] }
+    } 
+  }
+]).next();
+ 
+let winnerId = fightInfo.winner;
+let loserId = fightInfo.fighter1 === winnerId ? fightInfo.fighter2 : fightInfo.fighter1;
+ 
+// Step 3: Update the winner's record (Holloway)
+db.Fighters.updateOne(
+  { _id: parseInt(winnerId) },
+  { 
+    $inc: { 
+      "record.wins": 1,
+      "record.decisions": 1
+    } 
+  }
+)
+ 
+// Step 4: Update the loser's record (Poirier)
+db.Fighters.updateOne(
+  { _id: parseInt(loserId) },
+  { 
+    $inc: { 
+      "record.losses": 1
+    } 
+  }
+)
+ 
+console.log(`Updated fight result and fighters' records. Winner: ${winnerId} (Holloway), Loser: ${loserId} (Poirier)`);
+
+
+
+
+//---16---
+// ניתוח לפי קטגורית משקל
+db.Events.aggregate([
+  { $unwind: "$fights" },
+  // Group by weight class and winner to count wins
+  { $group: { _id: { class: "$fights.weightClass", fighter: "$fights.winner" }, wins: { $sum: 1 } } },
+  // Sort by weight class and then by number of wins descending
+  { $sort: { "_id.class": 1, "wins": -1 } },
+  // Group by weight class and collect the top fighters
+  { $group: { _id: "$_id.class", fighters: { $push: { id: "$_id.fighter", wins: "$wins" } } } },
+  // Limit to the top 3 fighters per weight class
+  { $project: { _id: 0, class: "$_id", topFighters: { $slice: ["$fighters", 3] } } },
+  { $sort: { class: 1 } },
+  // Lookup the fighters' names from the Fighters collection
+  { $lookup: {
+      from: "Fighters",
+      localField: "topFighters.id",
+      foreignField: "_id",
+      as: "fighterDetails"
+  }},
+  // Map the fighters array to include the name alongside ID and wins
+  { $addFields: {
+      topFighters: {
+        $map: {
+          input: "$topFighters",
+          as: "fighter",
+          in: {
+            id: "$$fighter.id",
+            wins: "$$fighter.wins",
+            name: {
+              $let: {
+                vars: {
+                  details: { $arrayElemAt: [{ $filter: { input: "$fighterDetails", as: "f", cond: { $eq: ["$$f._id", "$$fighter.id"] } } }, 0] }
+                },
+                in: { $concat: ["$$details.firstName", " ", "$$details.lastName"] }
+              }
+            }
+          }
+        }
+      }
+  }},
+  { $project: { fighterDetails: 0 } }
+]).forEach(weightClass => {
+  print(`\nWeight Class: ${weightClass.class}`);
+  weightClass.topFighters.forEach((fighter, index) => {
+    print(`  ${index + 1}. Fighter ID: ${fighter.id}, Name: ${fighter.name}, Wins: ${fighter.wins}`);
+  });
+});
+
+
+
+
+
+
+
+//---17---
+//חלוקה לאומנות לחימה לפי לוחם ואחוז הצלחה
+db.Fighters.aggregate([
+  {$unwind: "$martialArts"},
+  {$project: {
+    name: {$concat: ["$firstName", " ", "$lastName"]},
+    martialArt: "$martialArts",
+    totalFights: {$add: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"]},
+    wins: "$record.wins", losses: "$record.losses",
+    knockouts: "$record.knockouts", submissions: "$record.submissions",
+    winPercentage: {$multiply: [{$divide: ["$record.wins", {$add: ["$record.wins", "$record.losses", "$record.draws", "$record.noContests"]}]}, 100]}
+  }},
+  {$sort: {winPercentage: -1, wins: -1}},
+  {$group: {
+    _id: "$martialArt",
+    topFighters: {$push: {
+      name: "$name", totalFights: "$totalFights", wins: "$wins", losses: "$losses",
+      knockouts: "$knockouts", submissions: "$submissions",
+      winPercentage: {$round: ["$winPercentage", 2]}
+    }}
+  }},
+  {$project: {_id: 0, martialArt: "$_id", topFighters: {$slice: ["$topFighters", 3]}}},
+  {$sort: {martialArt: 1}},
+  {$out: "TopFightersByMartialArt"}
+]);
+print("Top 3 Fighters for Each Martial Art:");
+print("--------------------------------");
+db.TopFightersByMartialArt.find().forEach(function(art) {
+  print("Martial Art: " + art.martialArt);
+  art.topFighters.forEach(function(fighter, index) {
+    print((index + 1) + ". " + fighter.name);
+    print("   Total Fights: " + fighter.totalFights);
+    print("   Wins: " + fighter.wins + " | Losses: " + fighter.losses);
+    print("   Knockouts: " + fighter.knockouts + " | Submissions: " + fighter.submissions);
+    print("   Win Percentage: " + fighter.winPercentage + "%");
+  });
+  print("--------------------------------");
+});
+
+
+
+
+
+
+//---18---
+// המדינה בעלת מספר הלוחמים הכי גדול
+db.Fighters.aggregate([
+  { $group: { _id: "$nationality", count: { $sum: 1 } } },
+  { $sort: { count: -1 } },
+  { $limit: 5 },
+  { $project: { 
+      _id: 0, 
+      country: "$_id", 
+      fighters: "$count",
+      output: { $concat: [
+        { $toString: "$_id" }, 
+        ": ", 
+        { $toString: "$count" }, 
+        " fighters"
+      ]}
+    }
+  }
+]).forEach(function(doc) {
+  print(doc.output);
+});
+
+
+//---19---
+// הלוחם הכי רייוחי של הארגון
+// MapReduce operation to calculate fighter earnings and fight statistics
+var mapFunction = function() {
+    this.fights.forEach(function(fight) {
+        var winBonus = 50000;
+        var result = { earnings: 0, wins: 0, losses: 0, draws: 0 };
+        
+        if (fight.winner) {
+            result.earnings = winBonus;
+            result.wins = 1;
+            emit(fight.winner, result);
+            
+            var loserId = fight.winner === fight.fighter1 ? fight.fighter2 : fight.fighter1;
+            emit(loserId, { earnings: 0, wins: 0, losses: 1, draws: 0 });
+        } else {
+            result.earnings = -5000; // Draw penalty
+            result.draws = 1;
+            emit(fight.fighter1, result);
+            emit(fight.fighter2, result);
+        }
+    });
+};
+ 
+var reduceFunction = function(key, values) {
+    return values.reduce(function(total, current) {
+        return {
+            earnings: total.earnings + current.earnings,
+            wins: total.wins + current.wins,
+            losses: total.losses + current.losses,
+            draws: total.draws + current.draws
+        };
+    }, { earnings: 0, wins: 0, losses: 0, draws: 0 });
+};
+ 
+db.Events.mapReduce(
+    mapFunction,
+    reduceFunction,
+    { out: "fighterEarnings" }
+);
+ 
+// Find the top earner and add their name
+var topEarner = db.fighterEarnings.find().sort({value: -1}).limit(1).toArray()[0];
+var fighterDetails = db.Fighters.findOne({_id: NumberInt(topEarner._id)});
+ 
+var result = {
+    fighterId: topEarner._id,
+    name: fighterDetails.firstName + " " + fighterDetails.lastName,
+    earnings: topEarner.value.earnings,
+    wins: topEarner.value.wins,
+    losses: topEarner.value.losses,
+    draws: topEarner.value.draws,
+    totalFights: topEarner.value.wins + topEarner.value.losses + topEarner.value.draws
+};
+ 
+print("Top earning fighter:");
+printjson(result);
+
+
+//---20---
+// הוספת אומנות לחימה לכל לוחם מארה"ב
+// Count fighters from USA with Sambo before the update
+let countBefore = db.Fighters.count({ 
+    nationality: "USA", 
+    martialArts: "Sambo" 
+});
+print("Number of USA fighters with Sambo before update: " + countBefore);
+ 
+// Add Sambo to all USA fighters
+let updateResult = db.Fighters.updateMany(
+    { nationality: "USA" },
+    { $addToSet: { martialArts: "Sambo" } }
+);
+ 
+// Count fighters from USA with Sambo after the update
+let countAfter = db.Fighters.count({ 
+    nationality: "USA", 
+    martialArts: "Sambo" 
+});
+print("Number of USA fighters with Sambo after update: " + countAfter);
+ 
+// Display how many documents were actually modified
+print("Number of fighters updated: " + updateResult.modifiedCount);
+
+
+//---21---
+// הוצאה אליפות והכנסה אליפות חדשה
+// Display Jon Jones' championships before the update
+let fighterBefore = db.Fighters.findOne({ _id: 1000 });
+print("Jon Jones' championships before update:");
+printjson(fighterBefore.championships);
+ 
+// First, remove the Light Heavyweight championship
+db.Fighters.updateOne(
+    { _id: 1000 },
+    { 
+        $pull: { 
+            championships: { weightClass: "Light Heavyweight" } 
+        }
+    }
+);
+ 
+// Then, add the new Heavyweight championship
+db.Fighters.updateOne(
+    { _id: 1000 },
+    { 
+        $push: { 
+            championships: {
+                weightClass: "Heavyweight",
+                startDate: "2018-12-29",
+                endDate: "2023-01-14"
+            }
+        }
+    }
+);
+ 
+// Display Jon Jones' championships after the update
+let fighterAfter = db.Fighters.findOne({ _id: 1000 });
+print("\nJon Jones' championships after update:");
+printjson(fighterAfter.championships);
